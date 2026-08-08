@@ -1,0 +1,223 @@
+:root {
+  --bg: #0a0a0b;
+  --panel: #17171a;
+  --line: #2a2a30;
+  --text: #f2f2f4;
+  --muted: #9a9aa2;
+  --accent: #4a9eff;
+  --card-w: 150px;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+#app { height: 100vh; display: flex; flex-direction: column; }
+
+/* ---------- Loader ---------- */
+.loader {
+  max-width: 720px;
+  margin: 8vh auto;
+  padding: 0 24px;
+}
+.loader h1 { font-size: 34px; margin: 0 0 8px; letter-spacing: -0.5px; }
+.loader .sub { color: var(--muted); line-height: 1.5; margin: 0 0 18px; }
+#csv {
+  width: 100%;
+  height: 220px;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px;
+  font-family: ui-monospace, "Cascadia Code", monospace;
+  font-size: 13px;
+  resize: vertical;
+}
+.loader-row { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
+.loader-row .spacer { flex: 1; }
+.err { color: #ff6b6b; min-height: 20px; margin-top: 12px; }
+
+button, .filebtn {
+  font: inherit;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  padding: 9px 16px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+button:hover, .filebtn:hover { border-color: #444; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #05121f; font-weight: 600; }
+button.primary:hover { filter: brightness(1.08); }
+button.ghost { background: transparent; }
+button.small { padding: 6px 12px; font-size: 13px; }
+.filebtn { display: inline-block; }
+.dl { color: var(--muted); font-size: 13px; text-decoration: none; border-bottom: 1px dotted var(--line); }
+.dl:hover { color: var(--text); }
+
+/* ---------- Top bar ---------- */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(#141417, #101012);
+}
+.topbar .title { font-size: 22px; margin: 0; font-weight: 700; letter-spacing: -0.3px; }
+.topbar .meta { margin-left: auto; color: var(--muted); font-size: 14px; }
+
+/* ---------- Load bar ---------- */
+#loadbar {
+  height: 26px;
+  position: relative;
+  background: #111;
+  border-bottom: 1px solid var(--line);
+}
+#loadbar-inner { height: 100%; width: 0; background: linear-gradient(90deg, #2b6, #4a9eff); transition: width 0.2s; }
+#loadbar-label {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 12px; color: #cfe; letter-spacing: 0.3px;
+}
+#loadbar.hidden { display: none; }
+
+/* ---------- Board ---------- */
+.board {
+  flex: 1;
+  display: flex;
+  gap: 14px;
+  padding: 18px 20px 24px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.column {
+  flex: 0 0 auto;
+  width: var(--card-w);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.phead {
+  position: sticky;
+  top: 0;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.45);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.35);
+  z-index: 2;
+}
+.phead .pname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.phead .pcount {
+  background: rgba(0,0,0,0.28);
+  border-radius: 20px;
+  padding: 1px 9px;
+  font-size: 12px;
+  font-weight: 600;
+  min-width: 22px;
+  text-align: center;
+}
+.stack {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  padding-bottom: 8px;
+  scrollbar-width: thin;
+}
+
+/* ---------- Cards ---------- */
+.card {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 488 / 680;
+  border-radius: 8px;
+  animation: pop 0.22s ease;
+}
+.card.hidden { display: none; }
+.cardimg {
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #1d1d22;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+}
+.cardimg img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.cardimg.noimg {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  border: 1px dashed var(--line);
+}
+.cardimg.skeleton {
+  background: linear-gradient(100deg, #1d1d22 30%, #26262c 50%, #1d1d22 70%);
+  background-size: 200% 100%;
+  animation: shimmer 1.2s infinite;
+}
+.badge {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  background: rgba(0,0,0,0.72);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 20px;
+}
+.cardlink { position: absolute; inset: 0; border-radius: 8px; }
+.card.current .cardimg {
+  outline: 3px solid var(--accent);
+  outline-offset: 1px;
+  box-shadow: 0 0 0 3px rgba(74,158,255,0.35), 0 6px 18px rgba(74,158,255,0.4);
+}
+.card.current { animation: pop 0.22s ease; }
+
+@keyframes pop { from { transform: scale(0.9); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
+/* ---------- Scrubber ---------- */
+.scrubber {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--line);
+  background: linear-gradient(#101012, #141417);
+}
+.ctrl { padding: 6px 12px; font-size: 15px; line-height: 1; }
+#slider { flex: 1; accent-color: var(--accent); height: 6px; cursor: pointer; }
+.readout {
+  min-width: 360px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+.readout .rpick { font-weight: 700; color: var(--accent); }
+.readout .rround { color: var(--muted); }
+.readout .rdot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+.readout .rplayer { font-weight: 700; }
+.readout .rarrow { color: var(--muted); }
+.readout .rcard { font-weight: 600; }
+.readout .muted { color: var(--muted); }
