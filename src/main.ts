@@ -17,6 +17,7 @@ const state: State = { draft: null, current: 0 };
 let cardEls = new Map<string, HTMLElement[]>();
 let loader: CardLoader | null = null;
 let observer: IntersectionObserver | null = null;
+let chromeRO: ResizeObserver | null = null;
 
 // Per-player, the picks in that player's own pick order (with global numbers).
 function picksByPlayer(draft: Draft): Pick[][] {
@@ -105,9 +106,13 @@ function startReview() {
 function teardownReview() {
   observer?.disconnect();
   observer = null;
+  chromeRO?.disconnect();
+  chromeRO = null;
   loader = null;
   cardEls = new Map();
   document.removeEventListener("keydown", onKey);
+  window.removeEventListener("scroll", onScroll);
+  window.removeEventListener("resize", measureChrome);
 }
 
 function indexCards() {
@@ -215,12 +220,14 @@ function renderBoardShell() {
   const cols = picksByPlayer(draft);
 
   app.innerHTML = `
-    <div class="topbar">
-      <button id="back" class="ghost small">&larr; New</button>
-      <h1 class="title">${escapeHtml(draft.title)}</h1>
-      <div class="meta">${draft.players.length} players · ${draft.order.length} picks</div>
+    <div class="appbar">
+      <div class="topbar">
+        <button id="back" class="ghost small">&larr; New</button>
+        <h1 class="title">${escapeHtml(draft.title)}</h1>
+        <div class="meta">${draft.players.length} players · ${draft.order.length} picks</div>
+      </div>
+      <div id="loadbar"><div id="loadbar-inner"></div><span id="loadbar-label"></span></div>
     </div>
-    <div id="loadbar"><div id="loadbar-inner"></div><span id="loadbar-label"></span></div>
     <div class="board" id="board">
       ${draft.players
         .map(
@@ -268,14 +275,34 @@ function renderBoardShell() {
   app.querySelector("#next")!.addEventListener("click", () => step(1));
   app.querySelector("#last")!.addEventListener("click", () => step(Infinity));
 
-  // Scrolling a column changes what's on screen — re-prioritise as it settles.
-  app.querySelector("#board")!.addEventListener(
-    "scroll",
-    () => loader?.prioritize(visibleCardNames()),
-    { capture: true, passive: true },
-  );
+  // Scrolling changes what's on screen — re-prioritise as it settles.
+  window.addEventListener("scroll", onScroll, { passive: true });
+  window.addEventListener("resize", measureChrome);
+  measureChrome();
+  // The chrome resizes on its own too: the load bar collapses when the last
+  // image lands, and the readout wraps to a second line on narrow windows.
+  chromeRO = new ResizeObserver(measureChrome);
+  for (const el of app.querySelectorAll(".appbar, .scrubber")) chromeRO.observe(el);
 
   document.addEventListener("keydown", onKey);
+}
+
+function onScroll() {
+  loader?.prioritize(visibleCardNames());
+}
+
+// The topbar and scrubber are fixed, so the board has to pad around them.
+// Publish their real heights instead of guessing.
+function measureChrome() {
+  const root = document.documentElement;
+  const appbar = app.querySelector<HTMLElement>(".appbar");
+  const scrub = app.querySelector<HTMLElement>(".scrubber");
+  root.style.setProperty("--header-h", `${appbar?.offsetHeight ?? 0}px`);
+  root.style.setProperty("--scrub-h", `${scrub?.offsetHeight ?? 0}px`);
+  // A wide board puts a horizontal scrollbar at the very bottom of the window,
+  // which the fixed scrubber would otherwise sit on top of. 0 with overlay bars.
+  const hbar = Math.max(0, window.innerHeight - root.clientHeight);
+  root.style.setProperty("--hbar-h", `${hbar}px`);
 }
 
 function onKey(e: KeyboardEvent) {
@@ -304,6 +331,9 @@ function step(delta: number) {
 function update() {
   const draft = state.draft!;
   const current = state.current;
+  // Revealing cards can bring a scrollbar in or out — remeasure before we
+  // scroll to the current pick, so its scroll-margin is right.
+  measureChrome();
 
   for (const pk of draft.order) {
     const el = document.getElementById(`card-${pk.pickNumber}`);
@@ -339,7 +369,7 @@ function update() {
     // The pick being narrated matters most — put it at the head of the queue.
     loader?.prioritize([pk.cardName]);
     const el = document.getElementById(`card-${pk.pickNumber}`);
-    el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    el?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
   }
 }
 

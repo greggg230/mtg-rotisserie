@@ -6,6 +6,10 @@
   --muted: #9a9aa2;
   --accent: #4a9eff;
   --card-w: 150px;
+  /* Measured at runtime (main.ts) — the fixed chrome the board must clear. */
+  --header-h: 56px;
+  --scrub-h: 56px;
+  --hbar-h: 0px; /* height of the window's horizontal scrollbar, if any */
   color-scheme: dark;
 }
 
@@ -13,12 +17,13 @@
 
 html, body {
   margin: 0;
-  height: 100%;
+  min-height: 100%;
   background: var(--bg);
   color: var(--text);
   font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
 }
-#app { height: 100vh; display: flex; flex-direction: column; }
+/* The window is the only scroller — no nested scroll panes anywhere. */
+#app { min-height: 100vh; }
 
 /* ---------- Loader ---------- */
 .loader {
@@ -64,6 +69,15 @@ button.small { padding: 6px 12px; font-size: 13px; }
 .dl:hover { color: var(--text); }
 
 /* ---------- Top bar ---------- */
+/* Fixed, not sticky: the page scrolls sideways too, and fixed elements ignore
+   scroll on both axes so the chrome never drifts off the left edge. */
+.appbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 30;
+}
 .topbar {
   display: flex;
   align-items: center;
@@ -91,23 +105,22 @@ button.small { padding: 6px 12px; font-size: 13px; }
 
 /* ---------- Board ---------- */
 .board {
-  flex: 1;
   display: flex;
+  align-items: flex-start;
   gap: 14px;
-  padding: 18px 20px 24px;
-  overflow-x: auto;
-  overflow-y: hidden;
+  padding: calc(var(--header-h) + 18px) 20px calc(var(--scrub-h) + var(--hbar-h) + 24px);
+  width: max-content;
+  min-width: 100%;
 }
 .column {
   flex: 0 0 auto;
   width: var(--card-w);
   display: flex;
   flex-direction: column;
-  min-height: 0;
 }
 .phead {
   position: sticky;
-  top: 0;
+  top: var(--header-h);
   border-radius: 8px;
   padding: 8px 10px;
   font-weight: 700;
@@ -134,9 +147,6 @@ button.small { padding: 6px 12px; font-size: 13px; }
   display: flex;
   flex-direction: column;
   gap: 8px;
-  overflow-y: auto;
-  padding-bottom: 8px;
-  scrollbar-width: thin;
 }
 
 /* ---------- Cards ---------- */
@@ -146,6 +156,11 @@ button.small { padding: 6px 12px; font-size: 13px; }
   aspect-ratio: 488 / 680;
   border-radius: 8px;
   animation: pop 0.22s ease;
+  /* Keep scrollIntoView from parking a card under the fixed chrome. */
+  /* + the sticky player header that sits under it */
+  scroll-margin-top: calc(var(--header-h) + 52px);
+  scroll-margin-bottom: calc(var(--scrub-h) + var(--hbar-h) + 12px);
+  scroll-margin-inline: 24px;
 }
 .card.hidden { display: none; }
 .cardimg {
@@ -196,6 +211,11 @@ button.small { padding: 6px 12px; font-size: 13px; }
 
 /* ---------- Scrubber ---------- */
 .scrubber {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: var(--hbar-h); /* sit above the window's horizontal scrollbar, not on it */
+  z-index: 30;
   display: flex;
   align-items: center;
   gap: 10px;
