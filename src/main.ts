@@ -67,8 +67,10 @@ function renderLoader() {
 
   app.querySelector("#load")!.addEventListener("click", () => {
     err.textContent = "";
-    const text = csv.value.trim();
-    if (!text) {
+    // Don't trim: leading tabs on the first line are real empty columns, and
+    // dropping them hides that this is a tab-separated paste.
+    const text = csv.value;
+    if (!text.trim()) {
       err.textContent = "Nothing to load — paste your sheet first.";
       return;
     }

@@ -50,45 +50,81 @@ export interface ParseOptions {
   headerRow?: number; // 0-based override; if omitted, auto-detect
 }
 
+// Maximal runs of adjacent non-empty cells in a row, two cells or wider.
+// Players sit side by side, so their names always form one such run — and
+// taking a run (rather than every filled cell in the row) is what keeps a
+// side panel off to the right from being mistaken for more players.
+function filledRuns(row: string[]): number[][] {
+  const runs: number[][] = [];
+  let run: number[] = [];
+  for (let c = 0; c < row.length; c++) {
+    if (nonEmpty(row[c])) {
+      run.push(c);
+    } else if (run.length) {
+      runs.push(run);
+      run = [];
+    }
+  }
+  if (run.length) runs.push(run);
+  return runs.filter((r) => r.length >= 2);
+}
+
+// Find the row of player names, and which columns they occupy.
+//
+// Counting filled cells per row isn't enough: a sheet that numbers its rounds
+// in column A, marks the turn order with arrows, and parks a "Draft Status"
+// panel off to the right gives every PICK row more filled cells than the
+// header. Two things separate a header from a pick row:
+//
+//  - Player names sit at the TOP of their block, so the row above a header
+//    doesn't span the same columns. A pick row always has one above it.
+//  - The header's columns are the ones with the draft hanging below them.
+//
+// Score on raw cell count below, not density — a draft in progress leaves most
+// of its grid empty, and dividing by height would favour a two-column run of
+// incidental notes over nine real players.
+function detectHeader(rows: string[][]): { row: number; cols: number[] } | null {
+  let best: { row: number; cols: number[] } | null = null;
+  let bestScore = 0;
+  for (let r = 0; r < Math.min(rows.length, 10); r++) {
+    for (const cols of filledRuns(rows[r] ?? [])) {
+      const above = r === 0 ? 0 : cols.filter((c) => nonEmpty(rows[r - 1]?.[c])).length;
+      if (above >= 2) continue;
+      let below = 0;
+      for (let rr = r + 1; rr < rows.length; rr++) {
+        for (const c of cols) if (nonEmpty(rows[rr]?.[c])) below++;
+      }
+      if (below > bestScore) {
+        bestScore = below;
+        best = { row: r, cols };
+      }
+    }
+  }
+  return best;
+}
+
 export function buildDraft(table: string[][], opts: ParseOptions = {}): Draft {
-  // Trim fully-empty trailing rows.
   const rows = table.map((r) => r.slice());
 
-  // Title = first row that has exactly one non-empty cell (if any).
+  const found =
+    opts.headerRow === undefined
+      ? detectHeader(rows)
+      : { row: opts.headerRow, cols: filledRuns(rows[opts.headerRow] ?? [])[0] ?? [] };
+  const headerRow = found?.row ?? 0;
+  const playerCols = found?.cols ?? [];
+  const header = rows[headerRow] ?? [];
+
+  // Title: the first thing written above the players. Sheets often put it in a
+  // merged cell alongside other blurbs ("Next Pick: …"), so take the leftmost
+  // cell of the topmost non-empty row rather than requiring a row of its own.
   let title = "Rotisserie Draft";
-  let titleRowIdx = -1;
-  for (let r = 0; r < Math.min(rows.length, 5); r++) {
-    const filled = rows[r].filter(nonEmpty);
-    if (filled.length === 1) {
-      title = filled[0].trim();
-      titleRowIdx = r;
+  for (let r = 0; r < headerRow; r++) {
+    const cell = rows[r]?.find(nonEmpty);
+    if (cell) {
+      title = cell.trim();
       break;
     }
   }
-
-  // Header row: explicit override, else the row (after any title) with the most
-  // non-empty cells among the first several rows.
-  let headerRow = opts.headerRow;
-  if (headerRow === undefined) {
-    let best = -1;
-    let bestCount = 1; // need at least 2 players to qualify
-    for (let r = 0; r < Math.min(rows.length, 8); r++) {
-      if (r === titleRowIdx) continue;
-      const count = rows[r].filter(nonEmpty).length;
-      if (count > bestCount) {
-        bestCount = count;
-        best = r;
-      }
-    }
-    headerRow = best >= 0 ? best : titleRowIdx + 1;
-  }
-
-  const header = rows[headerRow] ?? [];
-  // Columns that have a non-empty header become players.
-  const playerCols: number[] = [];
-  header.forEach((cell, c) => {
-    if (nonEmpty(cell)) playerCols.push(c);
-  });
 
   const players: Player[] = playerCols.map((c, i) => ({
     name: header[c].trim(),

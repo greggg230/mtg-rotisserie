@@ -65,11 +65,19 @@ export function parseCSV(text: string): string[][] {
 }
 
 // Also handle tab-separated paste (Google Sheets copy/paste uses TAB, not comma).
-// Detect by comparing tab vs comma counts on the first non-empty line.
+// Sniff the delimiter across several lines rather than just the first: a title
+// row often holds a single cell, and if its leading tabs have been trimmed away
+// it looks delimiter-free — which used to send a whole TSV paste down the CSV
+// path and collapse it to one column. Card names ("Jace, the Mind Sculptor")
+// put a few commas in a TSV, but never as many as there are column separators.
 export function parseTable(text: string): string[][] {
-  const firstLine = text.split(/\r?\n/).find((l) => l.trim().length > 0) ?? "";
-  const tabs = (firstLine.match(/\t/g) || []).length;
-  const commas = (firstLine.match(/,/g) || []).length;
+  const sample = text
+    .split(/\r?\n/)
+    .filter((l) => l.trim().length > 0)
+    .slice(0, 20)
+    .join("\n");
+  const tabs = (sample.match(/\t/g) || []).length;
+  const commas = (sample.match(/,/g) || []).length;
   if (tabs > commas) {
     // TSV: quotes are rare in sheet paste; simple split is fine.
     return text
