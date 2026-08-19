@@ -16,13 +16,43 @@ Also registered in the dev hub (port 5180).
 
 ## Using it
 
+Either point it at a Google Sheet:
+
+1. Share the sheet with **Anyone with the link** (it's read straight from the
+   browser — see below).
+2. Paste the sheet URL into the box and click **Load sheet**. The address bar
+   becomes `?sheet=<id>&gid=<tab>`, which you can bookmark or share.
+3. **↻ Refresh** re-reads the sheet without losing your place, so the view
+   follows a draft that's still being filled in.
+
+…or paste the cells:
+
 1. In Google Sheets, select the cells (players across one row, each player's
    picks running down their column) and copy — or export/paste CSV.
 2. Paste into the textarea (or upload a `.csv` / `.tsv`) and click **Load draft**.
-3. Use the slider, ◀ ▶ buttons, or the **←/→ arrow keys** to step through picks.
 
-Click **Load sample** to see a worked example, or visit `/?sample` to jump
-straight to it (`/?sample&pick=11` opens at a specific pick).
+Either way, use the slider, ◀ ▶ buttons, or the **←/→ arrow keys** to step
+through the draft. Click **Load sample** to see a worked example.
+
+### URL parameters
+
+| Param | Meaning |
+| --- | --- |
+| `?sheet=` | Google Sheets URL or bare document ID |
+| `&gid=` | which tab (defaults to the first) |
+| `?sample` | the built-in sample draft |
+| `&pick=N` | open at pick N — the turn containing it is revealed |
+| `&doubleAfter=N` | override the round after which turns take two picks |
+
+### Reading a sheet from the browser
+
+There's no API key and no server: `docs.google.com/.../export?format=csv`
+answers cross-origin requests for a link-shared sheet, so the page fetches it
+directly. A sheet that isn't shared either refuses the read or answers with a
+sign-in page — both are reported as "share it with Anyone with the link".
+
+(The `gviz/tq` endpoint is also readable cross-origin, but it folds the title
+row into its header and mangles the column layout, so `export` is the one used.)
 
 ## Expected sheet shape
 
@@ -34,18 +64,30 @@ straight to it (`/?sample&pick=11` opens at a specific pick).
 ```
 
 - Players are **columns**; picks run **down** each column.
+- The header row is found by structure, not by counting: it's the run of
+  adjacent filled cells with the most data below it whose row above doesn't
+  span the same columns. That's what keeps round numbers, turn-order arrows,
+  and a "Draft Status" side panel from being mistaken for players — those rows
+  have *more* filled cells than the header does.
 - Leading blank columns/rows are tolerated; the title row and header row are
   auto-detected (header = the row with the most filled cells).
 - **Snake order is reconstructed automatically**: round 1 goes left→right,
   round 2 right→left, and so on. Works for any number of players and for a
   partial final round.
+- **Double picks** are supported. A sheet saying `Double Picks After: | 18` in
+  its status panel switches to two-card turns after round 18: rounds pair up,
+  the snake keeps alternating once per *turn row*, and the scrubber reveals
+  both cards of a turn in one step. Because round 18 comes back right-to-left
+  and ends on seat 1, that seat opens the doubling with its 19th and 20th
+  picks. Override with `&doubleAfter=N`, or leave it off entirely.
 - Card names with commas must be quoted if you paste raw CSV (Sheets copy/paste
   uses tabs, so this only matters for hand-written CSV).
 
 ## How it works
 
 - `src/csv.ts` — CSV/TSV parser (quoted fields, tab-paste detection).
-- `src/draft.ts` — header/player detection + snake-order reconstruction.
+- `src/sheets.ts` — Google Sheets URL/ID parsing + CSV fetch.
+- `src/draft.ts` — header/player detection, snake order, double-pick turns.
 - `src/scryfall.ts` — resolves the **oldest / original printing** of each card,
   batched, with a streaming loader. See below.
 

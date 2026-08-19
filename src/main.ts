@@ -3,14 +3,17 @@ import { parseTable } from "./csv";
 import { buildDraft, type Draft, type Pick } from "./draft";
 import { CardLoader, normalizeName, type CardInfo } from "./scryfall";
 import { SAMPLE_CSV } from "./sample";
+import { fetchSheetCsv, parseSheetRef, type SheetRef } from "./sheets";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 
 interface State {
   draft: Draft | null;
-  current: number; // 0..totalPicks
+  current: number; // turns revealed, 0..draft.turns.length
+  sheet: SheetRef | null; // set when loaded from Google Sheets, so we can refetch
+  doubleAfter?: number | null; // ?doubleAfter= override, kept across refreshes
 }
-const state: State = { draft: null, current: 0 };
+const state: State = { draft: null, current: 0, sheet: null };
 
 // Card elements keyed by normalized card name (a name can be picked more than
 // once across a pool, so each key maps to a list).
@@ -26,15 +29,43 @@ function picksByPlayer(draft: Draft): Pick[][] {
   return out;
 }
 
+// Turn a parsed sheet into the review screen, or an error string explaining
+// why it can't be. Shared by every entry point: paste, upload, sheet, sample.
+function showDraft(text: string, sheet: SheetRef | null): string | null {
+  let draft: Draft;
+  try {
+    draft = buildDraft(parseTable(text), { doubleAfter: state.doubleAfter });
+  } catch (e) {
+    return "Parse error: " + (e as Error).message;
+  }
+  if (draft.players.length < 2) {
+    return "Couldn't find at least 2 player columns. Check that player names are in one row across the top.";
+  }
+  if (draft.order.length === 0) return "Found players but no picks below them.";
+  state.draft = draft;
+  state.sheet = sheet;
+  state.current = 0; // start at the beginning — nothing revealed yet
+  startReview();
+  return null;
+}
+
 // ---------- Load screen ----------
-function renderLoader() {
+function renderLoader(message = "") {
   teardownReview();
   app.innerHTML = `
     <div class="loader">
       <h1>Rotisserie Draft Review</h1>
-      <p class="sub">Paste your draft spreadsheet (copy the cells straight from Google
-      Sheets, or paste CSV). Players across the top, each player's picks running down
-      their column.</p>
+      <p class="sub">Point it at a Google Sheet, or paste the cells straight from one.
+      Players across the top, each player's picks running down their column.</p>
+      <div class="loader-row sheetrow">
+        <input id="sheeturl" type="url" spellcheck="false"
+          placeholder="https://docs.google.com/spreadsheets/d/..." />
+        <button id="loadsheet" class="primary">Load sheet</button>
+      </div>
+      <p class="hint">The sheet has to be shared with “Anyone with the link”. Loading one
+      gives you a link you can bookmark or share — it re-reads the sheet each time,
+      so it follows the draft as it fills in.</p>
+      <div class="or"><span>or paste it</span></div>
       <textarea id="csv" placeholder="Paste sheet cells or CSV here..."></textarea>
       <div class="loader-row">
         <label class="filebtn">Upload .csv / .tsv
@@ -45,11 +76,30 @@ function renderLoader() {
         <div class="spacer"></div>
         <button id="load" class="primary">Load draft &rarr;</button>
       </div>
-      <p id="err" class="err"></p>
+      <p id="err" class="err">${escapeHtml(message)}</p>
     </div>`;
 
   const csv = app.querySelector<HTMLTextAreaElement>("#csv")!;
   const err = app.querySelector<HTMLParagraphElement>("#err")!;
+  const sheetInput = app.querySelector<HTMLInputElement>("#sheeturl")!;
+
+  const loadSheet = async () => {
+    err.textContent = "";
+    const ref = parseSheetRef(sheetInput.value);
+    if (!ref) {
+      err.textContent = "That doesn't look like a Google Sheets link.";
+      return;
+    }
+    err.textContent = "Reading sheet…";
+    // Put the sheet in the URL so this view is bookmarkable and shareable.
+    history.replaceState(null, "", sheetUrl(ref));
+    const message = await loadFromSheet(ref);
+    if (message) err.textContent = message;
+  };
+  app.querySelector("#loadsheet")!.addEventListener("click", loadSheet);
+  sheetInput.addEventListener("keydown", (e) => {
+    if ((e as KeyboardEvent).key === "Enter") loadSheet();
+  });
 
   app.querySelector("#file")!.addEventListener("change", (e) => {
     const f = (e.target as HTMLInputElement).files?.[0];
@@ -74,25 +124,26 @@ function renderLoader() {
       err.textContent = "Nothing to load — paste your sheet first.";
       return;
     }
-    try {
-      const table = parseTable(text);
-      const draft = buildDraft(table);
-      if (draft.players.length < 2) {
-        err.textContent =
-          "Couldn't find at least 2 player columns. Check that player names are in one row across the top.";
-        return;
-      }
-      if (draft.order.length === 0) {
-        err.textContent = "Found players but no picks below them.";
-        return;
-      }
-      state.draft = draft;
-      state.current = 0; // start at the beginning — nothing revealed yet
-      startReview();
-    } catch (e) {
-      err.textContent = "Parse error: " + (e as Error).message;
-    }
+    err.textContent = showDraft(text, null) ?? "";
   });
+}
+
+// The shareable form of a sheet-backed view: ?sheet=<id>&gid=<tab>.
+function sheetUrl(ref: SheetRef, pick?: number): string {
+  const p = new URLSearchParams();
+  p.set("sheet", ref.id);
+  if (ref.gid) p.set("gid", ref.gid);
+  if (state.doubleAfter != null) p.set("doubleAfter", String(state.doubleAfter));
+  if (pick) p.set("pick", String(pick));
+  return `${location.pathname}?${p}`;
+}
+
+async function loadFromSheet(ref: SheetRef): Promise<string | null> {
+  try {
+    return showDraft(await fetchSheetCsv(ref), ref);
+  } catch (e) {
+    return (e as Error).message;
+  }
 }
 
 // ---------- Review screen ----------
@@ -226,7 +277,10 @@ function renderBoardShell() {
       <div class="topbar">
         <button id="back" class="ghost small">&larr; New</button>
         <h1 class="title">${escapeHtml(draft.title)}</h1>
-        <div class="meta">${draft.players.length} players · ${draft.order.length} picks</div>
+        ${state.sheet ? `<button id="refresh" class="ghost small" title="Re-read the sheet">&#x21bb; Refresh</button>` : ""}
+        <div class="meta">${draft.players.length} players · ${draft.order.length} picks${
+          draft.doubleAfter ? ` · double picks after round ${draft.doubleAfter}` : ""
+        }</div>
       </div>
       <div id="loadbar"><div id="loadbar-inner"></div><span id="loadbar-label"></span></div>
     </div>
@@ -257,7 +311,7 @@ function renderBoardShell() {
     <div class="scrubber">
       <button id="first" class="ctrl" title="Start (0)">&#x23EE;</button>
       <button id="prev" class="ctrl" title="Previous pick (←)">&#x25C0;</button>
-      <input type="range" id="slider" min="0" max="${draft.order.length}" value="${state.current}" />
+      <input type="range" id="slider" min="0" max="${draft.turns.length}" value="${state.current}" />
       <button id="next" class="ctrl" title="Next pick (→)">&#x25B6;</button>
       <button id="last" class="ctrl" title="End">&#x23ED;</button>
       <div class="readout" id="readout"></div>
@@ -265,7 +319,29 @@ function renderBoardShell() {
 
   app.querySelector("#back")!.addEventListener("click", () => {
     state.draft = null;
+    state.sheet = null;
+    history.replaceState(null, "", location.pathname);
     renderLoader();
+  });
+
+  // Re-read the sheet in place. A live draft grows while you're looking at it,
+  // so hold the current turn rather than dropping back to the start.
+  app.querySelector("#refresh")?.addEventListener("click", async () => {
+    const ref = state.sheet;
+    const meta = app.querySelector<HTMLDivElement>(".topbar .meta")!;
+    const was = meta.textContent;
+    meta.textContent = "Re-reading sheet…";
+    const at = state.current;
+    const message = ref ? await loadFromSheet(ref) : "No sheet to refresh.";
+    if (message) {
+      meta.textContent = was;
+      renderLoader(message);
+      return;
+    }
+    state.current = Math.min(at, state.draft!.turns.length);
+    const s = app.querySelector<HTMLInputElement>("#slider");
+    if (s) s.value = String(state.current);
+    update();
   });
   const slider = app.querySelector<HTMLInputElement>("#slider")!;
   slider.addEventListener("input", () => {
@@ -319,7 +395,7 @@ function onKey(e: KeyboardEvent) {
 }
 
 function step(delta: number) {
-  const total = state.draft!.order.length;
+  const total = state.draft!.turns.length;
   let v = state.current + delta;
   if (delta === Infinity) v = total;
   if (delta === -Infinity) v = 0;
@@ -329,7 +405,10 @@ function step(delta: number) {
   update();
 }
 
-// Reveal/hide cards + highlight current pick based on state.current.
+// Reveal/hide cards + highlight the current turn based on state.current.
+// One step of the scrubber is one TURN, which is one pick for most of a draft
+// and two once doubling starts — a double pick happened as a single decision,
+// so it reveals as one.
 function update() {
   const draft = state.draft!;
   const current = state.current;
@@ -340,14 +419,13 @@ function update() {
   for (const pk of draft.order) {
     const el = document.getElementById(`card-${pk.pickNumber}`);
     if (!el) continue;
-    const revealed = pk.pickNumber <= current;
-    el.classList.toggle("hidden", !revealed);
-    el.classList.toggle("current", pk.pickNumber === current);
+    el.classList.toggle("hidden", pk.turn >= current);
+    el.classList.toggle("current", pk.turn === current - 1);
   }
 
   // per-player counts
   const counts = new Array(draft.players.length).fill(0);
-  for (const pk of draft.order) if (pk.pickNumber <= current) counts[pk.playerIndex]++;
+  for (const pk of draft.order) if (pk.turn < current) counts[pk.playerIndex]++;
   counts.forEach((c, i) => {
     const el = document.getElementById(`pcount-${i}`);
     if (el) el.textContent = String(c);
@@ -358,21 +436,26 @@ function update() {
   if (!readout) return;
   if (current === 0) {
     readout.innerHTML = `<span class="muted">Draft not started — press → to reveal pick 1</span>`;
-  } else {
-    const pk = draft.order[current - 1];
-    const pl = draft.players[pk.playerIndex];
-    readout.innerHTML =
-      `<span class="rpick">Pick ${pk.pickNumber}</span>` +
-      `<span class="rround">Round ${pk.round}</span>` +
-      `<span class="rdot" style="background:${pl.color}"></span>` +
-      `<span class="rplayer">${escapeHtml(pl.name)}</span>` +
-      `<span class="rarrow">took</span>` +
-      `<span class="rcard">${escapeHtml(pk.cardName)}</span>`;
-    // The pick being narrated matters most — put it at the head of the queue.
-    loader?.prioritize([pk.cardName]);
-    const el = document.getElementById(`card-${pk.pickNumber}`);
-    el?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+    return;
   }
+  const turn = draft.turns[current - 1];
+  const pl = draft.players[turn[0].playerIndex];
+  const nums = turn.map((p) => p.pickNumber);
+  const rounds = turn.map((p) => p.round);
+  const span = (a: number[]) => (a.length > 1 ? `${a[0]}–${a[a.length - 1]}` : `${a[0]}`);
+  readout.innerHTML =
+    `<span class="rpick">${turn.length > 1 ? "Picks" : "Pick"} ${span(nums)}</span>` +
+    `<span class="rround">${turn.length > 1 ? "Rounds" : "Round"} ${span(rounds)}</span>` +
+    `<span class="rdot" style="background:${pl.color}"></span>` +
+    `<span class="rplayer">${escapeHtml(pl.name)}</span>` +
+    `<span class="rarrow">took</span>` +
+    `<span class="rcard">${turn.map((p) => escapeHtml(p.cardName)).join(" + ")}</span>`;
+  // The picks being narrated matter most — put them at the head of the queue.
+  loader?.prioritize(turn.map((p) => p.cardName));
+  // Scroll to the last card of the turn: it's the lower of the two, so bringing
+  // it into view brings its partner with it.
+  const el = document.getElementById(`card-${nums[nums.length - 1]}`);
+  el?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
 }
 
 function escapeHtml(s: string): string {
@@ -392,23 +475,51 @@ function escapeHtml(s: string): string {
   });
 }
 
-// Auto-load the sample draft when visiting with ?sample — handy for demos
-// and for sharing a link that lands straight on the board.
-function boot() {
+// URL entry points, so a view can be bookmarked or shared:
+//   ?sheet=<id|url>&gid=<tab>   read a link-shared Google Sheet
+//   ?sample                     the built-in sample draft
+//   ?pick=N                     open at pick N (its whole turn is revealed)
+//   ?doubleAfter=N              override the sheet's own double-pick round
+async function boot() {
   const params = new URLSearchParams(location.search);
-  if (params.has("sample")) {
-    try {
-      const draft = buildDraft(parseTable(SAMPLE_CSV));
-      state.draft = draft;
-      const pick = Number(params.get("pick"));
-      state.current =
-        Number.isFinite(pick) && params.has("pick")
-          ? Math.max(0, Math.min(draft.order.length, pick))
-          : 0;
-      startReview();
+
+  const dbl = params.get("doubleAfter");
+  if (dbl !== null) {
+    const n = Number(dbl);
+    state.doubleAfter = Number.isInteger(n) && n > 0 ? n : null;
+  }
+
+  // ?pick= is a pick NUMBER, not a turn index — it predates double picks and
+  // stays stable as a citation. Resolve it to the turn holding that pick.
+  const openAt = () => {
+    const draft = state.draft;
+    if (!draft) return;
+    const pick = Number(params.get("pick"));
+    if (!params.has("pick") || !Number.isFinite(pick)) return;
+    const hit = draft.order.find((p) => p.pickNumber >= pick);
+    state.current = hit ? hit.turn + 1 : draft.turns.length;
+    update();
+  };
+
+  const sheet = params.get("sheet");
+  if (sheet) {
+    const ref = parseSheetRef(sheet);
+    if (!ref) {
+      renderLoader("That doesn't look like a Google Sheets link or ID.");
       return;
-    } catch {
-      /* fall through to loader */
+    }
+    // Carry the gid from its own param when the link supplies it separately.
+    const gid = params.get("gid");
+    const message = await loadFromSheet({ ...ref, gid: gid ?? ref.gid });
+    if (message) renderLoader(message);
+    else openAt();
+    return;
+  }
+
+  if (params.has("sample")) {
+    if (!showDraft(SAMPLE_CSV, null)) {
+      openAt();
+      return;
     }
   }
   renderLoader();

@@ -11,12 +11,15 @@ export interface Pick {
   round: number; // 1-based
   playerIndex: number;
   cardName: string;
+  turn: number; // 0-based; one turn takes two picks once doubling starts
 }
 
 export interface Draft {
   title: string;
   players: Player[];
   order: Pick[]; // every pick, sorted by global snake order
+  turns: Pick[][]; // the same picks grouped into turns — what the scrubber steps
+  doubleAfter: number | null; // round after which a turn takes two picks
 }
 
 // Distinct, reasonably colorblind-friendly palette. Cycles if more players.
@@ -48,6 +51,7 @@ function nonEmpty(s: string | undefined): boolean {
 // picks run DOWN their column. Leading blank columns/rows are tolerated.
 export interface ParseOptions {
   headerRow?: number; // 0-based override; if omitted, auto-detect
+  doubleAfter?: number | null; // override the sheet's own "Double Picks After"
 }
 
 // Maximal runs of adjacent non-empty cells in a row, two cells or wider.
@@ -140,46 +144,77 @@ export function buildDraft(table: string[][], opts: ParseOptions = {}): Draft {
     });
   }
 
-  const order = snakeOrder(players);
-  return { title, players, order };
+  const doubleAfter =
+    opts.doubleAfter !== undefined ? opts.doubleAfter : detectDoubleAfter(rows);
+  const order = snakeOrder(players, doubleAfter);
+  return { title, players, order, turns: groupTurns(order), doubleAfter };
 }
 
 // Reconstruct global pick order from per-player picks using snake seating:
 // round 1 goes players L->R, round 2 R->L, etc. Ragged columns are fine —
 // a pick only exists where a card is present.
-export function snakeOrder(players: Player[]): Pick[] {
+//
+// Some drafts switch to double picks partway through: after round `doubleAfter`
+// a player takes two cards when their turn comes round, so rounds pair up. The
+// snake keeps alternating once per TURN row rather than once per round, which
+// is what makes the doubling open with seat 1 — round 18 comes back right-to-
+// left and ends on seat 1, who then takes rounds 19 and 20 back to back.
+export function snakeOrder(players: Player[], doubleAfter: number | null = null): Pick[] {
   const P = players.length;
   const maxRounds = players.reduce((m, p) => Math.max(m, p.picks.length), 0);
   const order: Pick[] = [];
   let pickNumber = 0;
-  for (let r = 0; r < maxRounds; r++) {
-    const leftToRight = r % 2 === 0;
-    const seq = leftToRight
-      ? [...Array(P).keys()]
-      : [...Array(P).keys()].reverse();
+  let turn = -1;
+  let stage = 0; // one per turn row: a single round, or a pair once doubled
+
+  for (let round = 1; round <= maxRounds; stage++) {
+    const doubled = doubleAfter !== null && round > doubleAfter;
+    const rounds = doubled ? [round, round + 1] : [round];
+    const seq =
+      stage % 2 === 0 ? [...Array(P).keys()] : [...Array(P).keys()].reverse();
+
     for (const i of seq) {
-      const card = players[i].picks[r];
-      if (card !== undefined) {
+      const cards = rounds
+        .map((r) => ({ round: r, cardName: players[i].picks[r - 1] }))
+        .filter((c) => c.cardName !== undefined);
+      if (!cards.length) continue; // player hasn't reached this turn yet
+      turn++;
+      for (const c of cards) {
         pickNumber++;
         order.push({
           pickNumber,
-          round: r + 1,
+          round: c.round,
           playerIndex: i,
-          cardName: card,
+          cardName: c.cardName,
+          turn,
         });
       }
     }
+    round += rounds.length;
   }
   return order;
 }
 
-// How many of each player's cards are revealed once we've advanced to a given
-// global pick number. Returns an array parallel to players.
-export function revealedCounts(draft: Draft, uptoPick: number): number[] {
-  const counts = new Array(draft.players.length).fill(0);
-  for (const p of draft.order) {
-    if (p.pickNumber > uptoPick) break;
-    counts[p.playerIndex]++;
+export function groupTurns(order: Pick[]): Pick[][] {
+  const turns: Pick[][] = [];
+  for (const p of order) (turns[p.turn] ??= []).push(p);
+  return turns;
+}
+
+// Sheets that switch to double picks tend to say so in a status panel, as a
+// "Double Picks After:" label with the round in the next cell along. Read it
+// rather than hardcoding a rule that's really a property of the draft.
+function detectDoubleAfter(rows: string[][]): number | null {
+  for (const row of rows) {
+    for (let c = 0; c < row.length; c++) {
+      if (!/double\s*picks?\s*after/i.test(row[c] ?? "")) continue;
+      for (let cc = c + 1; cc < row.length; cc++) {
+        const v = (row[cc] ?? "").trim();
+        if (!v) continue;
+        const n = Number(v);
+        return Number.isInteger(n) && n > 0 ? n : null;
+      }
+    }
   }
-  return counts;
+  return null;
 }

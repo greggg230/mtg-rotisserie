@@ -47,6 +47,28 @@ html, body {
 }
 .loader-row { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
 .loader-row .spacer { flex: 1; }
+.sheetrow { margin-top: 4px; }
+#sheeturl {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px 12px;
+}
+#sheeturl:focus { outline: none; border-color: var(--accent); }
+.hint { color: var(--muted); font-size: 13px; line-height: 1.5; margin: 10px 0 0; }
+.or {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 13px;
+  margin: 20px 0 12px;
+}
+.or::before, .or::after { content: ""; height: 1px; background: var(--line); flex: 1; }
 .err { color: #ff6b6b; min-height: 20px; margin-top: 12px; }
 
 button, .filebtn {
