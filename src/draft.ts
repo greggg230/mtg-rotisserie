@@ -3,7 +3,9 @@
 export interface Player {
   name: string;
   color: string;
-  picks: string[]; // card names, in the order they appear down the column
+  // Card names indexed by round-1, i.e. by the row they sit in. Sparse: a
+  // player who hasn't taken their turn yet leaves a hole rather than shifting.
+  picks: (string | undefined)[];
 }
 
 export interface Pick {
@@ -136,11 +138,14 @@ export function buildDraft(table: string[][], opts: ParseOptions = {}): Draft {
     picks: [],
   }));
 
-  // Collect picks going down each player's column.
+  // Collect picks going down each player's column, keeping each card in the
+  // ROW it was written in. Compacting non-empty cells instead would let one
+  // gap — a player who hasn't filled their cell while the player after them
+  // has — pull every later pick in that column up a round.
   for (let r = headerRow + 1; r < rows.length; r++) {
     playerCols.forEach((c, i) => {
       const v = rows[r][c];
-      if (nonEmpty(v)) players[i].picks.push(v.trim());
+      if (nonEmpty(v)) players[i].picks[r - headerRow - 1] = v.trim();
     });
   }
 
@@ -174,9 +179,10 @@ export function snakeOrder(players: Player[], doubleAfter: number | null = null)
       stage % 2 === 0 ? [...Array(P).keys()] : [...Array(P).keys()].reverse();
 
     for (const i of seq) {
-      const cards = rounds
-        .map((r) => ({ round: r, cardName: players[i].picks[r - 1] }))
-        .filter((c) => c.cardName !== undefined);
+      const cards = rounds.flatMap((r) => {
+        const cardName = players[i].picks[r - 1];
+        return cardName === undefined ? [] : [{ round: r, cardName }];
+      });
       if (!cards.length) continue; // player hasn't reached this turn yet
       turn++;
       for (const c of cards) {
