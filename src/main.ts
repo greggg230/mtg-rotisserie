@@ -3,7 +3,13 @@ import { parseTable } from "./csv";
 import { buildDraft, type Draft, type Pick } from "./draft";
 import { CardLoader, loadLocalCards, normalizeName, type CardInfo } from "./scryfall";
 import { SAMPLE_CSV } from "./sample";
-import { fetchSheetCsv, parseSheetRef, type SheetRef } from "./sheets";
+import {
+  DEFAULT_TAB,
+  fetchSheetCsv,
+  parseSheetRef,
+  resolveSheet,
+  type SheetRef,
+} from "./sheets";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 
@@ -11,9 +17,10 @@ interface State {
   draft: Draft | null;
   current: number; // turns revealed, 0..draft.turns.length
   sheet: SheetRef | null; // set when loaded from Google Sheets, so we can refetch
+  tabName: string | null; // the tab we actually read, once resolved
   doubleAfter?: number | null; // ?doubleAfter= override, kept across refreshes
 }
-const state: State = { draft: null, current: 0, sheet: null };
+const state: State = { draft: null, current: 0, sheet: null, tabName: null };
 
 // Card elements keyed by normalized card name (a name can be picked more than
 // once across a pool, so each key maps to a list).
@@ -94,10 +101,14 @@ function renderLoader(message = "") {
       return;
     }
     err.textContent = "Reading sheet…";
-    // Put the sheet in the URL so this view is bookmarkable and shareable.
-    history.replaceState(null, "", sheetUrl(ref));
     const message = await loadFromSheet(ref);
-    if (message) err.textContent = message;
+    if (message) {
+      err.textContent = message;
+      return;
+    }
+    // Put the RESOLVED sheet+tab in the URL, so the bookmark points at the
+    // draft tab even when what was pasted pointed somewhere else.
+    history.replaceState(null, "", sheetUrl(state.sheet ?? ref));
   };
   app.querySelector("#loadsheet")!.addEventListener("click", loadSheet);
   sheetInput.addEventListener("keydown", (e) => {
@@ -136,14 +147,31 @@ function sheetUrl(ref: SheetRef, pick?: number): string {
   const p = new URLSearchParams();
   p.set("sheet", ref.id);
   if (ref.gid) p.set("gid", ref.gid);
+  if (ref.tab) p.set("tab", ref.tab);
   if (state.doubleAfter != null) p.set("doubleAfter", String(state.doubleAfter));
   if (pick) p.set("pick", String(pick));
   return `${location.pathname}?${p}`;
 }
 
+// Resolve the link to the draft tab, read it, and show it. The link can point
+// at any tab of the sheet — the Cube tab, the rules tab, whatever was on screen
+// when it was copied.
 async function loadFromSheet(ref: SheetRef): Promise<string | null> {
   try {
-    return showDraft(await fetchSheetCsv(ref), ref);
+    const { ref: resolved, tab, tabs } = await resolveSheet(ref);
+    const csv = await fetchSheetCsv(resolved);
+    state.tabName = tab?.name ?? null; // before showDraft: the board renders it
+    const message = showDraft(csv, resolved);
+    if (message && tabs.length) {
+      // Name what we read and what else was on offer — far more useful than
+      // "couldn't find player columns" when the wrong tab got picked.
+      const want = ref.tab || DEFAULT_TAB;
+      const names = tabs.map((t) => t.name).join(", ");
+      return tab
+        ? `${message}\n(Read the “${tab.name}” tab. Tabs in this sheet: ${names}. Add &tab=<name> to pick another.)`
+        : `Couldn't find a tab named “${want}”. Tabs in this sheet: ${names}. Add &tab=<name> to pick one.`;
+    }
+    return message;
   } catch (e) {
     return (e as Error).message;
   }
@@ -293,8 +321,8 @@ function renderBoardShell() {
       <div class="topbar">
         <button id="back" class="ghost small">&larr; New</button>
         <h1 class="title">${escapeHtml(draft.title)}</h1>
-        ${state.sheet ? `<button id="refresh" class="ghost small" title="Re-read the sheet">&#x21bb; Refresh</button>` : ""}
-        <div class="meta">${draft.players.length} players · ${draft.order.length} picks${
+        ${state.sheet ? `<button id="refresh" class="ghost small" title="Re-read the ${escapeHtml(state.tabName ?? "sheet")} tab">&#x21bb; Refresh</button>` : ""}
+        <div class="meta">${state.tabName ? `${escapeHtml(state.tabName)} tab · ` : ""}${draft.players.length} players · ${draft.order.length} picks${
           draft.doubleAfter ? ` · double picks after round ${draft.doubleAfter}` : ""
         }</div>
       </div>
@@ -524,9 +552,13 @@ async function boot() {
       renderLoader("That doesn't look like a Google Sheets link or ID.");
       return;
     }
-    // Carry the gid from its own param when the link supplies it separately.
+    // Carry the gid and tab name from their own params when supplied separately.
     const gid = params.get("gid");
-    const message = await loadFromSheet({ ...ref, gid: gid ?? ref.gid });
+    const message = await loadFromSheet({
+      ...ref,
+      gid: gid ?? ref.gid,
+      tab: params.get("tab"),
+    });
     if (message) renderLoader(message);
     else openAt();
     return;

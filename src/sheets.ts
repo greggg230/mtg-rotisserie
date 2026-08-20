@@ -12,7 +12,15 @@ const BARE_ID = /^[A-Za-z0-9-_]{20,}$/;
 export interface SheetRef {
   id: string;
   gid: string | null; // which tab; null means the sheet's first tab
+  tab?: string | null; // tab to look for by name; defaults to "draft"
 }
+
+export interface SheetTab {
+  name: string;
+  gid: string;
+}
+
+export const DEFAULT_TAB = "draft";
 
 // Accepts a full Sheets URL (any of the /edit#gid=, ?gid=, /view forms) or a
 // bare document ID.
@@ -33,6 +41,72 @@ export function csvUrl(ref: SheetRef): string {
 }
 
 const SHARE_HINT = 'In Sheets: Share → General access → "Anyone with the link".';
+
+// ---------- Finding the right tab ----------
+// A Sheets link points at whichever tab you were looking at, which usually
+// isn't the draft. There's no tab listing without an API key, but the htmlview
+// page bootstraps its own tab switcher with one — items.push({name: "Draft",
+// … gid: "123"}) — and it's readable cross-origin like the CSV export.
+//
+// The obvious alternative, gviz's ?sheet=<name>, is a trap: it's pleasantly
+// case-insensitive, but a name that doesn't exist silently returns the FIRST
+// tab with a 200 rather than erroring, so you can't tell "found it" from
+// "didn't". Reading the real list and resolving to a gid avoids guessing.
+const TAB_RE = /\{name:\s*"((?:\\.|[^"\\])*)"[\s\S]{0,400}?gid:\s*"(-?\d+)"/g;
+
+function unescapeJs(s: string): string {
+  return s
+    .replace(/\\x([0-9a-fA-F]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/\\(.)/g, "$1");
+}
+
+export async function fetchTabs(id: string): Promise<SheetTab[]> {
+  try {
+    const resp = await fetch(`https://docs.google.com/spreadsheets/d/${encodeURIComponent(id)}/htmlview`);
+    if (!resp.ok) return [];
+    const html = await resp.text();
+    const tabs: SheetTab[] = [];
+    const seen = new Set<string>();
+    for (const m of html.matchAll(TAB_RE)) {
+      const name = unescapeJs(m[1]).trim();
+      if (name && !seen.has(m[2])) {
+        seen.add(m[2]);
+        tabs.push({ name, gid: m[2] });
+      }
+    }
+    return tabs;
+  } catch {
+    return []; // fall back to whatever gid the link carried
+  }
+}
+
+// Which tab to actually read. A gid the link already points at is honoured when
+// it IS a draft tab — someone linking "Draft 2" means it — otherwise we go find
+// the draft tab, which is the whole point: any tab's link should work.
+export function chooseTab(tabs: SheetTab[], ref: SheetRef): SheetTab | null {
+  const want = (ref.tab || DEFAULT_TAB).trim().toLowerCase();
+  const matches = (t: SheetTab) => t.name.trim().toLowerCase() === want;
+  const contains = (t: SheetTab) => t.name.toLowerCase().includes(want);
+
+  const linked = ref.gid ? tabs.find((t) => t.gid === ref.gid) : undefined;
+  if (linked && contains(linked)) return linked;
+
+  return tabs.find(matches) ?? tabs.find(contains) ?? linked ?? null;
+}
+
+export interface ResolvedSheet {
+  ref: SheetRef; // with gid filled in
+  tab: SheetTab | null; // the tab we settled on, when we could name it
+  tabs: SheetTab[]; // everything we found, for error messages
+}
+
+// Turn "a link to some tab" into "the draft tab of that sheet".
+export async function resolveSheet(ref: SheetRef): Promise<ResolvedSheet> {
+  const tabs = await fetchTabs(ref.id);
+  const tab = chooseTab(tabs, ref);
+  return { ref: { ...ref, gid: tab?.gid ?? ref.gid }, tab, tabs };
+}
 
 export async function fetchSheetCsv(ref: SheetRef): Promise<string> {
   let res: Response;

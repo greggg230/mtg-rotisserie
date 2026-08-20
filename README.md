@@ -20,8 +20,10 @@ Either point it at a Google Sheet:
 
 1. Share the sheet with **Anyone with the link** (it's read straight from the
    browser — see below).
-2. Paste the sheet URL into the box and click **Load sheet**. The address bar
-   becomes `?sheet=<id>&gid=<tab>`, which you can bookmark or share.
+2. Paste the sheet URL into the box and click **Load sheet**. It can be a link
+   to **any tab** — the Cube tab, the rules tab, whatever was on screen when you
+   copied it — the draft tab is found by name. The address bar becomes
+   `?sheet=<id>&gid=<tab>` pointing at the tab it settled on, ready to bookmark.
 3. **↻ Refresh** re-reads the sheet without losing your place, so the view
    follows a draft that's still being filled in.
 
@@ -39,7 +41,8 @@ through the draft. Click **Load sample** to see a worked example.
 | Param | Meaning |
 | --- | --- |
 | `?sheet=` | Google Sheets URL or bare document ID |
-| `&gid=` | which tab (defaults to the first) |
+| `&tab=` | tab to read, by name (default: the one called **Draft**) |
+| `&gid=` | tab id — used only if no tab matches by name |
 | `?sample` | the built-in sample draft |
 | `&pick=N` | open at pick N — the turn containing it is revealed |
 | `&doubleAfter=N` | override the round after which turns take two picks |
@@ -51,8 +54,26 @@ answers cross-origin requests for a link-shared sheet, so the page fetches it
 directly. A sheet that isn't shared either refuses the read or answers with a
 sign-in page — both are reported as "share it with Anyone with the link".
 
-(The `gviz/tq` endpoint is also readable cross-origin, but it folds the title
-row into its header and mangles the column layout, so `export` is the one used.)
+### Finding the draft tab
+
+A Sheets link points at whichever tab you were looking at, so the app resolves
+the tab itself rather than trusting the `gid`. There's no tab listing without an
+API key, but the **htmlview** page bootstraps its own tab switcher with one —
+`items.push({name: "Draft", … gid: "123"})` — and it's readable cross-origin
+like the CSV export. The app reads that list, picks the tab named `draft`
+(case-insensitive, `&tab=` to override), and fetches it by gid.
+
+A `gid` in the link wins only when it already points at a draft tab, so linking
+a tab called "Draft 2" does what you'd expect. If no tab matches, the error
+names every tab in the sheet.
+
+Two dead ends worth recording:
+
+- `gviz/tq?sheet=<name>` reads a tab **by name** and is pleasantly
+  case-insensitive — but a name that doesn't exist silently returns the **first
+  tab** with a 200 instead of erroring, so you can't tell success from failure.
+- `gviz` also folds the title rows into its header and mangles the layout unless
+  you pass `headers=0`. `export?format=csv` never does, so that's what's used.
 
 ## Expected sheet shape
 
