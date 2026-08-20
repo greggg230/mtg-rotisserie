@@ -34,6 +34,38 @@ const CACHE_KEY = "scryfall-cache-v3-oldest";
 const SEARCH_URL = "https://api.scryfall.com/cards/search";
 const NAMED_URL = "https://api.scryfall.com/cards/named";
 
+// ---------- Locally-hosted cube images ----------
+// scripts/fetch_cube_images.py ships the cube's cards with the site, so the
+// common case never touches Scryfall at all — no rate limiting, no dropped
+// images, and they're already sized for the board. Anything not in the cube
+// (or a card whose local copy fails to load) still goes to the API.
+export type LocalCards = Map<string, CardInfo>;
+
+export async function loadLocalCards(baseUrl: string): Promise<LocalCards> {
+  const out: LocalCards = new Map();
+  try {
+    const resp = await fetch(`${baseUrl}cards/index.json`);
+    if (!resp.ok) return out;
+    const data = await resp.json();
+    for (const [key, entry] of Object.entries<any>(data?.cards ?? {})) {
+      const [file, name, set, released, collector] = entry as string[];
+      if (!file) continue;
+      out.set(key, {
+        name: name || key,
+        set: set || null,
+        released: released || null,
+        image: `${baseUrl}cards/${file}`,
+        backImage: null,
+        scryfallUri: set && collector ? `https://scryfall.com/card/${set}/${collector}` : null,
+        found: true,
+      });
+    }
+  } catch {
+    /* no manifest (dev without a fetch run, or a failed deploy) — use the API */
+  }
+  return out;
+}
+
 // Batching keeps us far under Scryfall's limits, so we can afford to be polite:
 // ~8 req/sec ceiling with only a few in flight.
 const MIN_GAP_MS = 130;
@@ -224,34 +256,54 @@ export interface LoaderOptions {
   // Called as soon as a card resolves (or immediately, for cache hits).
   onCard: (key: string, info: CardInfo) => void;
   onProgress?: (done: number, total: number) => void;
+  local?: LocalCards; // locally-hosted images, consulted before the API
 }
 
 export class CardLoader {
   private cache: Cache = loadCache();
   private queue: string[] = []; // pending keys, front = highest priority
   private seen = new Set<string>(); // every key ever added
+  private local: LocalCards;
+  private refetched = new Set<string>(); // local copies we've already given up on
   private doneCount = 0;
   private total = 0;
   private workers = 0;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(private opts: LoaderOptions) {}
+  constructor(private opts: LoaderOptions) {
+    this.local = opts.local ?? new Map();
+  }
 
-  // Queue names for loading. Cache hits are delivered synchronously.
+  // Queue names for loading. Local and cached hits are delivered synchronously.
   add(names: string[]) {
     for (const raw of names) {
       const key = norm(raw);
       if (!key || this.seen.has(key)) continue;
       this.seen.add(key);
       this.total++;
-      const cached = this.cache[key];
-      if (cached) {
+      const hit = this.local.get(key) ?? this.cache[key];
+      if (hit) {
         this.doneCount++;
-        this.opts.onCard(key, cached);
+        this.opts.onCard(key, hit);
       } else {
         this.queue.push(key);
       }
     }
+    this.opts.onProgress?.(this.doneCount, this.total);
+    this.spawn();
+  }
+
+  // A local copy that won't load (missing file, half-finished deploy) shouldn't
+  // leave a hole in the board — drop it and resolve that card from the API.
+  // Once per card, so a genuinely broken image can't loop.
+  refetch(name: string) {
+    const key = norm(name);
+    if (this.refetched.has(key)) return;
+    this.refetched.add(key);
+    this.local.delete(key);
+    delete this.cache[key];
+    this.doneCount = Math.max(0, this.doneCount - 1);
+    this.queue.unshift(key);
     this.opts.onProgress?.(this.doneCount, this.total);
     this.spawn();
   }

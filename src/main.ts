@@ -1,7 +1,7 @@
 import "./style.css";
 import { parseTable } from "./csv";
 import { buildDraft, type Draft, type Pick } from "./draft";
-import { CardLoader, normalizeName, type CardInfo } from "./scryfall";
+import { CardLoader, loadLocalCards, normalizeName, type CardInfo } from "./scryfall";
 import { SAMPLE_CSV } from "./sample";
 import { fetchSheetCsv, parseSheetRef, type SheetRef } from "./sheets";
 
@@ -19,6 +19,9 @@ const state: State = { draft: null, current: 0, sheet: null };
 // once across a pool, so each key maps to a list).
 let cardEls = new Map<string, HTMLElement[]>();
 let loader: CardLoader | null = null;
+// Start reading the local card manifest immediately — it's a same-origin file
+// and we want it in hand by the time the board is ready for images.
+const localCards = loadLocalCards(import.meta.env.BASE_URL);
 let observer: IntersectionObserver | null = null;
 let chromeRO: ResizeObserver | null = null;
 
@@ -179,13 +182,16 @@ function indexCards() {
   }
 }
 
-function startLoading() {
+async function startLoading() {
   const draft = state.draft!;
   const bar = app.querySelector<HTMLDivElement>("#loadbar-inner")!;
   const label = app.querySelector<HTMLSpanElement>("#loadbar-label")!;
   const loadbar = app.querySelector<HTMLDivElement>("#loadbar")!;
+  const local = await localCards;
+  if (state.draft !== draft) return; // navigated away while the manifest loaded
 
   loader = new CardLoader({
+    local,
     onCard: fillCard,
     onProgress: (done, total) => {
       const pct = total ? Math.round((done / total) * 100) : 100;
@@ -251,6 +257,16 @@ function fillCard(key: string, info: CardInfo) {
       img.alt = info.name;
       img.loading = "lazy";
       img.decoding = "async";
+      // If a locally-hosted copy won't load, put the card back to a skeleton
+      // and let the loader resolve it from Scryfall instead of leaving a gap.
+      img.addEventListener("error", () => {
+        const name = el.dataset.name || info.name;
+        img.remove();
+        imgWrap.dataset.filled = "";
+        imgWrap.classList.add("skeleton");
+        el.querySelector(".cardlink")?.remove();
+        loader?.refetch(name);
+      });
       imgWrap.appendChild(img);
       if (info.scryfallUri) {
         const a = document.createElement("a");

@@ -48,6 +48,16 @@ function nonEmpty(s: string | undefined): boolean {
   return !!s && s.trim().length > 0;
 }
 
+// Distinguishes a draft's name from the other things that share its row: a
+// round counter in column A, a "Next Pick:" label, a lone arrow glyph.
+function looksLikeTitle(s: string | undefined): boolean {
+  const t = (s ?? "").trim();
+  if (t.length < 2) return false;
+  if (!/[A-Za-z]/.test(t)) return false; // numbers, arrows, tally marks
+  if (t.endsWith(":")) return false; // a label for the cell next to it
+  return true;
+}
+
 // Auto-detect the header row (the one holding player names) and build the draft.
 // Assumptions matching the reference sheet: players are COLUMNS, each player's
 // picks run DOWN their column. Leading blank columns/rows are tolerated.
@@ -120,15 +130,17 @@ export function buildDraft(table: string[][], opts: ParseOptions = {}): Draft {
   const playerCols = found?.cols ?? [];
   const header = rows[headerRow] ?? [];
 
-  // Title: the first thing written above the players. Sheets often put it in a
-  // merged cell alongside other blurbs ("Next Pick: …"), so take the leftmost
-  // cell of the topmost non-empty row rather than requiring a row of its own.
+  // Title: the first title-ish thing written above the players. The row it sits
+  // on tends to carry other widgets too — a round counter in column A, a
+  // "Next Pick:" label — so take the first cell that reads like a name rather
+  // than the leftmost one.
   let title = "Rotisserie Draft";
-  for (let r = 0; r < headerRow; r++) {
-    const cell = rows[r]?.find(nonEmpty);
-    if (cell) {
-      title = cell.trim();
-      break;
+  outer: for (let r = 0; r < headerRow; r++) {
+    for (const cell of rows[r] ?? []) {
+      if (looksLikeTitle(cell)) {
+        title = cell.trim();
+        break outer;
+      }
     }
   }
 

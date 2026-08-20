@@ -88,8 +88,9 @@ row into its header and mangles the column layout, so `export` is the one used.)
 - `src/csv.ts` — CSV/TSV parser (quoted fields, tab-paste detection).
 - `src/sheets.ts` — Google Sheets URL/ID parsing + CSV fetch.
 - `src/draft.ts` — header/player detection, snake order, double-pick turns.
-- `src/scryfall.ts` — resolves the **oldest / original printing** of each card,
-  batched, with a streaming loader. See below.
+- `src/scryfall.ts` — locally-hosted images first, then the **oldest / original
+  printing** from Scryfall, batched, with a streaming loader. See below.
+- `scripts/fetch_cube_images.py` — one-off fetch of the cube's images.
 
 ## Image loading
 
@@ -97,6 +98,33 @@ The board renders immediately with skeleton placeholders; images stream in
 behind it, **on-screen cards first**. An `IntersectionObserver` pushes whatever
 scrolls into view (or gets revealed by the scrubber) to the front of the queue,
 so you never wait on cards you can't see.
+
+### Self-hosted cube images
+
+The cube is stable, so its images ship with the site rather than being fetched
+per visitor. That removes the common case from Scryfall entirely — no rate
+limiting, no images that quietly fail to appear, and no per-card round trip.
+
+```
+python scripts/fetch_cube_images.py            # incremental; only fetches what's missing
+python scripts/fetch_cube_images.py --force    # refetch everything
+```
+
+It reads the **Cube** tab of the draft sheet, resolves each name to the same
+oldest printing the app would have chosen, and writes `public/cards/<slug>.webp`
+plus `public/cards/index.json`. Images are resized to 300px wide — exactly 2x
+the 150px the board renders them at — which is ~26 kB each against Scryfall's
+137 kB JPEG, so the whole cube is ~19 MB.
+
+The manifest keys each card by **both** the cube sheet's spelling and Scryfall's
+canonical name, so a draft sheet that writes it either way still hits the local
+copy. `CardLoader` checks the manifest before the network; anything not in it
+(joke cards, a card added mid-draft, a typo) goes to the API as before. If a
+local image fails to load, that card falls back to Scryfall once rather than
+leaving a gap.
+
+Re-run the script when cards are added to the cube. Card images are copyright
+Wizards of the Coast, served here via Scryfall for a private draft review.
 
 Getting the *oldest* printing without one request per card is the fiddly part:
 
