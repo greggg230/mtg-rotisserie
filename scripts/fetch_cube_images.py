@@ -35,6 +35,22 @@ SHEET_ID = "1SbL11xt_ZejTYAE4VYPqfDcQS20dmvXh-vwbilS6LiI"
 CUBE_GID = "1905431728"
 SEARCH_URL = "https://api.scryfall.com/cards/search"
 NAMED_URL = "https://api.scryfall.com/cards/named"
+CARD_URL = "https://api.scryfall.com/cards"
+
+# Art that must not follow the oldest-printing rule.
+#   "set/number" -> pin that exact Scryfall printing (oldest is the wrong art)
+#   None         -> custom card; its image in public/cards/ is hand-managed
+#                   (sourced from the draft sheets' Changes tabs) — never fetch
+OVERRIDES: dict[str, str | None] = {
+    "jace, vryn's prodigy": "ori/60",  # oldest is the SDCC black-art promo
+    "meddling wizard": None,
+    "quantity over quality": None,
+    "i've made a huge mistake": None,
+    "another head?!": None,
+    "inconceivable!": None,
+    "inconceivable": None,
+    "splash the pot": None,
+}
 
 # Scryfall asks for a descriptive User-Agent and an Accept header, plus 50-100ms
 # between requests. We're in no hurry — this runs once.
@@ -199,14 +215,25 @@ def main() -> int:
         manifest = json.loads(MANIFEST.read_text(encoding="utf-8")).get("cards", {})
 
     todo = [n for n in names if args.force or norm(n) not in manifest]
-    print(f"to fetch: {len(todo)} ({len(names) - len(todo)} already local)")
+    # Hand-managed custom cards are never fetched, even with --force.
+    todo = [n for n in todo if OVERRIDES.get(norm(n), "") is not None]
+    print(f"to fetch: {len(todo)} ({len(names) - len(todo)} already local or hand-managed)")
 
+    pinned = [n for n in todo if norm(n) in OVERRIDES]
+    batchable = [n for n in todo if norm(n) not in OVERRIDES]
     resolved: dict[str, dict] = {}
-    for i in range(0, len(todo), BATCH):
-        chunk = todo[i : i + BATCH]
+    for name in pinned:
+        time.sleep(API_GAP)
+        card = get(f"{CARD_URL}/{OVERRIDES[norm(name)]}")
+        if card:
+            resolved[norm(name)] = card
+        else:
+            print(f"  ? pinned printing missing: {name} -> {OVERRIDES[norm(name)]}")
+    for i in range(0, len(batchable), BATCH):
+        chunk = batchable[i : i + BATCH]
         resolved.update(resolve_batch(chunk))
-        print(f"  resolved {min(i + BATCH, len(todo))}/{len(todo)}", flush=True)
-    for name in todo:
+        print(f"  resolved {min(i + BATCH, len(batchable))}/{len(batchable)}", flush=True)
+    for name in batchable:
         if norm(name) not in resolved:
             card = resolve_one(name)
             if card:
