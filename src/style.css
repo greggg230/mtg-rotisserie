@@ -263,3 +263,269 @@ button.small { padding: 6px 12px; font-size: 13px; }
 .readout .rarrow { color: var(--muted); }
 .readout .rcard { font-weight: 600; }
 .readout .muted { color: var(--muted); }
+
+/* ---------- Live spectator view (?draft=, live.ts) ---------- */
+/* The grid scrolls inside its own pane, both ways, so the player row and the
+   round column can stay pinned while the page itself never moves — on a phone
+   ten columns is far wider than the screen, and the window must not scroll
+   sideways. The review screen's "window is the only scroller" rule stops at
+   this boundary on purpose. */
+html.live, html.live body { height: 100%; overflow: hidden; overscroll-behavior: none; }
+html.live {
+  --gutter-w: 34px;
+  --col-gap: 10px;
+  --row-gap: 8px;
+}
+
+.live-top { flex-wrap: wrap; row-gap: 6px; }
+.live-top .title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.livepill {
+  position: relative;
+  flex: 0 0 auto;
+  padding: 3px 9px 3px 21px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: #6fdc9a;
+  background: rgba(43, 187, 102, 0.14);
+}
+.livepill::before {
+  content: "";
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  margin-top: -3.5px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: livepulse 1.6s ease-in-out infinite;
+}
+.livepill.done { color: var(--muted); background: rgba(154, 154, 162, 0.14); }
+.livepill.done::before { animation: none; }
+.livepill.warn { color: #ffc04d; background: rgba(255, 176, 32, 0.14); }
+.lnotice {
+  padding: 6px 20px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #ffd27a;
+  background: #1c170c;
+  border-bottom: 1px solid #3a2e14;
+}
+.lnotice[hidden] { display: none; }
+
+.lpane {
+  position: fixed;
+  top: var(--header-h);
+  bottom: var(--scrub-h);
+  left: 0;
+  right: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.lempty { color: var(--muted); padding: 24px 20px; margin: 0; max-width: 640px; line-height: 1.5; }
+.lempty[hidden] { display: none; }
+
+/* Gaps live inside each cell as padding rather than as grid gaps, so the
+   pinned header row and round column tile with no seams for cards to show
+   through as they scroll underneath. */
+.lgrid {
+  display: grid;
+  grid-template-columns: var(--gutter-w) repeat(var(--players, 1), calc(var(--card-w) + var(--col-gap)));
+  width: max-content;
+  min-width: 100%;
+  padding-right: 10px;
+}
+.lgrid > * { padding: 0 var(--col-gap) var(--row-gap) 0; }
+.lcorner, .lhead {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  padding-top: 12px;
+  padding-bottom: 10px;
+  background: var(--bg);
+}
+.lcorner { left: 0; z-index: 4; grid-row: 1; grid-column: 1; }
+.lhead { grid-row: 1; }
+.lhead .phead { position: static; }
+.lround {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: var(--bg);
+  padding: 6px 0 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.lround.dbl { color: #c9a8ff; } /* two-card turns, after the doubling round */
+
+.lcard {
+  cursor: pointer; /* also what lets iOS deliver a tap on a plain element */
+  scroll-margin: 64px 16px 16px calc(var(--gutter-w) + 12px);
+}
+.lcard:focus { outline: none; }
+.lcard:focus-visible .cardimg { outline: 2px solid var(--text); outline-offset: 2px; }
+.lcard.shown .cardimg { outline: 2px solid #fff; outline-offset: 2px; }
+.lcard.current .cardimg { outline: 3px solid var(--accent); outline-offset: 1px; }
+.lcard::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+  pointer-events: none;
+  opacity: 0;
+}
+.lcard.fresh::after { animation: freshglow 6s ease-out; }
+.notemark {
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.74);
+  box-shadow: 0 0 0 1.5px var(--pc, var(--accent));
+}
+.notemark svg { width: 12px; height: 12px; fill: #fff; }
+.lslot {
+  width: 100%;
+  aspect-ratio: 488 / 680;
+  border-radius: 8px;
+  border: 1px dashed var(--line);
+}
+.lslot.next {
+  border: 2px dashed var(--pc);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--pc);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  animation: nextpulse 1.8s ease-in-out infinite;
+}
+
+/* The bottom bar narrates the newest turn instead of scrubbing. */
+.nowbar { gap: 16px; }
+.lnow {
+  flex: 1;
+  min-width: 0;
+  justify-content: flex-start;
+  background: transparent;
+  border: none;
+  padding: 2px 0;
+  text-align: left;
+  color: var(--text);
+}
+.lnow:not(:disabled):hover .rcard { text-decoration: underline; text-underline-offset: 3px; }
+.lnow:disabled { cursor: default; }
+.lnext { display: flex; align-items: center; gap: 6px; font-size: 14px; white-space: nowrap; }
+.lnext .rdot, .tip .rdot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: 0 0 auto; }
+.lnext .muted { color: var(--muted); }
+
+/* ---------- Pick rationale: a popover beside the card, or a bottom sheet ---------- */
+.tip {
+  position: fixed;
+  z-index: 40;
+  left: 0;
+  top: 0;
+  width: max-content;
+  max-width: min(340px, calc(100vw - 16px));
+  max-height: min(60vh, 420px);
+  overflow: auto;
+  padding: 12px 14px 14px;
+  border-radius: 10px;
+  border: 1px solid #34343c;
+  background: #1b1b20;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.6);
+  font-size: 14px;
+  line-height: 1.45;
+}
+.tip[hidden] { display: none; }
+.tip-head { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.tip-who { font-weight: 700; }
+.tip-when { color: var(--muted); }
+.tip-x {
+  margin: -4px -6px -4px auto;
+  padding: 2px 9px;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--muted);
+  background: transparent;
+  border-color: transparent;
+  visibility: hidden; /* a hover doesn't need closing; a pinned one does */
+}
+.tip.pinned .tip-x { visibility: visible; }
+.tip-body { display: flex; gap: 12px; margin-top: 8px; }
+.tip-img { display: none; }
+.tip-text { min-width: 0; }
+.tip-card { font-weight: 700; font-size: 15px; margin-bottom: 6px; }
+.tip-note {
+  margin: 0;
+  padding-left: 10px;
+  border-left: 3px solid var(--pc, var(--accent));
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.tip-none { margin: 0; color: var(--muted); font-style: italic; }
+.tip-link {
+  display: inline-block;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--accent);
+  text-decoration: none;
+}
+.tip-link:hover { text-decoration: underline; }
+
+@keyframes livepulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+@keyframes nextpulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+@keyframes freshglow {
+  0%, 35% { opacity: 1; box-shadow: 0 0 0 4px rgba(74, 158, 255, 0.75), 0 0 26px rgba(74, 158, 255, 0.7); }
+  100% { opacity: 0; box-shadow: 0 0 0 4px rgba(74, 158, 255, 0), 0 0 26px rgba(74, 158, 255, 0); }
+}
+
+@media (max-width: 640px) {
+  html.live {
+    --card-w: 104px;
+    --gutter-w: 26px;
+    --col-gap: 8px;
+    --row-gap: 6px;
+  }
+  .live-top { padding: 8px 12px; gap: 8px; }
+  .live-top .title { font-size: 17px; flex: 1; }
+  .live-top .meta { order: 5; flex-basis: 100%; margin-left: 0; font-size: 12px; }
+  .live-top #back { display: none; }
+  .lnotice { padding: 6px 12px; font-size: 12px; }
+  .lhead .phead { padding: 6px 8px; font-size: 13px; }
+  .lhead .pcount { padding: 1px 6px; min-width: 0; font-size: 11px; }
+  .lgrid .badge { font-size: 10px; }
+  .notemark { width: 20px; height: 20px; right: 4px; bottom: 4px; }
+  .nowbar { flex-wrap: wrap; row-gap: 4px; padding: 8px 12px calc(8px + env(safe-area-inset-bottom)); }
+  .nowbar .readout { font-size: 13px; gap: 6px; }
+  .lnext { font-size: 13px; }
+
+  /* A bottom sheet: fingers need a big target and a fixed place to look. */
+  .tip {
+    top: auto !important;
+    left: 0 !important;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    max-width: none;
+    max-height: 55vh;
+    border-radius: 14px 14px 0 0;
+    border-width: 1px 0 0;
+    padding: 14px 16px calc(16px + env(safe-area-inset-bottom));
+    box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.6);
+  }
+  .tip .tip-x { visibility: visible; font-size: 22px; padding: 4px 12px; }
+  .tip-img { display: block; flex: 0 0 auto; width: 92px; border-radius: 6px; align-self: flex-start; }
+}

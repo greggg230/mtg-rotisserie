@@ -99,19 +99,47 @@ function filledRuns(row: string[]): number[][] {
 // Score on raw cell count below, not density — a draft in progress leaves most
 // of its grid empty, and dividing by height would favour a two-column run of
 // incidental notes over nine real players.
+//
+// Kept in step with the queue app's copy (mtg-rotisserie-queue,
+// worker/lib/draft.ts), which found the case below first: a draft only a few
+// picks in has almost nothing under its player row, while the round numbers
+// and turn arrows beside the grid run its full height.
+
+// A header cell holds a person's name, so it has letters in it. This is what
+// separates the real header from the run beside it that a draft sheet always
+// has: a column of round numbers and a column of turn markers, "1" and "→",
+// which carry no letters at all.
+function looksLikeName(s: string | undefined): boolean {
+  const t = (s ?? "").trim();
+  return t.length > 0 && /\p{L}/u.test(t);
+}
+
 function detectHeader(rows: string[][]): { row: number; cols: number[] } | null {
   let best: { row: number; cols: number[] } | null = null;
-  let bestScore = 0;
+  let bestScore = -1;
   for (let r = 0; r < Math.min(rows.length, 10); r++) {
     for (const cols of filledRuns(rows[r] ?? [])) {
       const above = r === 0 ? 0 : cols.filter((c) => nonEmpty(rows[r - 1]?.[c])).length;
       if (above >= 2) continue;
+
+      // Most of the run has to read as names. One oddity is tolerated — someone
+      // will eventually go by a number — but a run with no letters in it is the
+      // numbering beside the grid, not the grid.
+      const named = cols.filter((c) => looksLikeName(rows[r]?.[c])).length;
+      if (named * 5 < cols.length * 3) continue;
+
       let below = 0;
       for (let rr = r + 1; rr < rows.length; rr++) {
         for (const c of cols) if (nonEmpty(rows[rr]?.[c])) below++;
       }
-      if (below > bestScore) {
-        bestScore = below;
+
+      // Width first, cards below only as a tiebreak. Scoring on cards alone
+      // meant a draft where nobody had picked yet had no header at all: the
+      // player row has nothing under it until the first pick is made, and the
+      // round numbers running down the side have forty rows under theirs.
+      const score = cols.length * 1000 + Math.min(below, 999);
+      if (score > bestScore) {
+        bestScore = score;
         best = { row: r, cols };
       }
     }

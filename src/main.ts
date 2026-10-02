@@ -3,6 +3,8 @@ import { parseTable } from "./csv";
 import { buildDraft, type Draft, type Pick } from "./draft";
 import { CardLoader, loadLocalCards, normalizeName, type CardInfo } from "./scryfall";
 import { SAMPLE_CSV } from "./sample";
+import { escapeHtml } from "./html";
+import { startLive, type LiveHandle } from "./live";
 import {
   DEFAULT_TAB,
   fetchSheetCsv,
@@ -31,6 +33,7 @@ let loader: CardLoader | null = null;
 const localCards = loadLocalCards(import.meta.env.BASE_URL);
 let observer: IntersectionObserver | null = null;
 let chromeRO: ResizeObserver | null = null;
+let live: LiveHandle | null = null; // the ?draft= spectator view, while it's up
 
 // Per-player, the picks in that player's own pick order (with global numbers).
 function picksByPlayer(draft: Draft): Pick[][] {
@@ -188,6 +191,8 @@ function startReview() {
 }
 
 function teardownReview() {
+  live?.stop();
+  live = null;
   observer?.disconnect();
   observer = null;
   chromeRO?.disconnect();
@@ -502,28 +507,12 @@ function update() {
   el?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
 }
 
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => {
-    switch (c) {
-      case "&":
-        return "&amp;";
-      case "<":
-        return "&lt;";
-      case ">":
-        return "&gt;";
-      case '"':
-        return "&quot;";
-      default:
-        return "&#39;";
-    }
-  });
-}
-
 // URL entry points, so a view can be bookmarked or shared:
 //   ?sheet=<id|url>&gid=<tab>   read a link-shared Google Sheet
 //   ?sample                     the built-in sample draft
 //   ?pick=N                     open at pick N (its whole turn is revealed)
 //   ?doubleAfter=N              override the sheet's own double-pick round
+//   ?draft=<id>&app=<origin>    follow a live draft run by the queue app (live.ts)
 async function boot() {
   const params = new URLSearchParams(location.search);
 
@@ -531,6 +520,25 @@ async function boot() {
   if (dbl !== null) {
     const n = Number(dbl);
     state.doubleAfter = Number.isInteger(n) && n > 0 ? n : null;
+  }
+
+  // Before ?sheet=: a live link may carry a sheet too, as its fallback.
+  const draftId = params.get("draft")?.trim();
+  if (draftId) {
+    live = startLive(app, {
+      draftId,
+      app: params.get("app"),
+      sheet: params.get("sheet"),
+      tab: params.get("tab"),
+      gid: params.get("gid"),
+      doubleAfter: state.doubleAfter,
+      localCards,
+      onExit: () => {
+        history.replaceState(null, "", location.pathname);
+        renderLoader();
+      },
+    });
+    return;
   }
 
   // ?pick= is a pick NUMBER, not a turn index — it predates double picks and

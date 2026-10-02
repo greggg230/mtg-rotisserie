@@ -14,6 +14,16 @@ export default defineConfig(({ command, isPreview }) => ({
     host: "0.0.0.0",
     port: 5180,
     allowedHosts: ["desktop-j05412i", "localhost", ".ts.net"],
+    // Dev only: ?draft=<id>&app=/rotisserie-proxy reads the production queue
+    // app through this server, same-origin, so the live view can be tried
+    // against real data whether or not the app sends CORS headers.
+    proxy: {
+      "/rotisserie-proxy": {
+        target: "https://rotisserie.greggg230.com",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/rotisserie-proxy/, ""),
+      },
+    },
   },
   preview: {
     host: "0.0.0.0",

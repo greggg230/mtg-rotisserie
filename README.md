@@ -46,6 +46,44 @@ through the draft. Click **Load sample** to see a worked example.
 | `?sample` | the built-in sample draft |
 | `&pick=N` | open at pick N — the turn containing it is revealed |
 | `&doubleAfter=N` | override the round after which turns take two picks |
+| `?draft=` | follow a live draft run by the queue app — see below |
+| `&app=` | which queue app to ask (default `https://rotisserie.greggg230.com`) |
+
+## Watching a live draft
+
+`?draft=<id>` follows a draft that is still being drafted, using its id in the
+[rotisserie queue app](https://rotisserie.greggg230.com) (the `<id>` in
+`/d/<id>`). It shows the whole grid — players across, rounds down — and updates
+itself every 30 seconds:
+
+- The newest turn is outlined, and picks that landed since the last look glow
+  briefly. The bottom bar narrates the newest turn and who's up next; tap it to
+  jump to that pick.
+- A speech bubble on a card means the picker left a rationale. Hover it on a
+  desktop (click to pin it open), or tap it on a phone, where it opens as a
+  sheet along the bottom. Tap the card again, the ×, or anywhere else in the
+  grid to close it.
+- Scroll position and an open rationale survive every refresh. The grid scrolls
+  inside its own pane in both directions, with the player row and round column
+  pinned, so the page itself never scrolls sideways on a phone.
+- Polling pauses while the tab is hidden and catches up when it's looked at
+  again; once the draft is complete it drops to every five minutes. If the app
+  can't be reached the last good grid stays up with a notice, and it backs off
+  to retrying every two minutes at most.
+
+Data comes from the app's `GET /api/drafts/<id>/picks`, not from the sheet: the
+app already reads the sheet (cached, so a room full of spectators costs Google
+one read), numbers seats and rounds the way the rationales are keyed, and has
+matched each rationale to the card actually in its cell — one consistent
+snapshot. That endpoint answers cross-origin with `Access-Control-Allow-Origin:
+*`. Add `&sheet=<id>` to fall back to reading the sheet directly when the app
+can't be reached; the grid keeps moving and the rationales return with the app.
+
+Against an app that doesn't serve rationales yet, the grid still works and a
+notice says so. In development, `&app=/rotisserie-proxy` reads the production
+app through the Vite dev server (see `vite.config.ts`), same-origin, so it works
+whether or not the app sends CORS headers; `&app=http://desktop-j05412i:5181`
+reads a local `wrangler dev`.
 
 ### Reading a sheet from the browser
 
@@ -85,11 +123,14 @@ Two dead ends worth recording:
 ```
 
 - Players are **columns**; picks run **down** each column.
-- The header row is found by structure, not by counting: it's the run of
-  adjacent filled cells with the most data below it whose row above doesn't
-  span the same columns. That's what keeps round numbers, turn-order arrows,
-  and a "Draft Status" side panel from being mistaken for players — those rows
-  have *more* filled cells than the header does.
+- The header row is found by structure, not by counting: it's the widest run
+  of adjacent filled cells, mostly names (cells with letters in them), whose
+  row above doesn't span the same columns — with the data below it only as a
+  tiebreak. That's what keeps round numbers, turn-order arrows, and a "Draft
+  Status" side panel from being mistaken for players — those rows have *more*
+  filled cells than the header does, and a draft only a few picks in has far
+  more numbers and arrows down its side than cards under its players. Same
+  rule as the queue app's parser.
 - Leading blank columns/rows are tolerated; the title row and header row are
   auto-detected (header = the row with the most filled cells).
 - **Snake order is reconstructed automatically**: round 1 goes left→right,
@@ -111,6 +152,8 @@ Two dead ends worth recording:
 - `src/draft.ts` — header/player detection, snake order, double-pick turns.
 - `src/scryfall.ts` — locally-hosted images first, then the **oldest / original
   printing** from Scryfall, batched, with a streaming loader. See below.
+- `src/live.ts` — the `?draft=` live view: polling, the patched-in-place grid,
+  and the rationale popover / bottom sheet.
 - `scripts/fetch_cube_images.py` — one-off fetch of the cube's images.
 
 ## Image loading
