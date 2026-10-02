@@ -159,8 +159,9 @@ async function fetchAppFeed(app: string, draftId: string): Promise<Feed> {
   let res: Response;
   try {
     // No credentials: this is a public read, and the app only allows it
-    // cross-origin on those terms.
-    res = await fetch(url, { credentials: "omit", signal: ctl.signal });
+    // cross-origin on those terms. No browser cache either: a copy the
+    // browser was told it could keep for hours froze the draft mid-round.
+    res = await fetch(url, { credentials: "omit", cache: "no-store", signal: ctl.signal });
   } catch {
     // A refused cross-origin read and a dead network look the same from here.
     throw new FeedError(
