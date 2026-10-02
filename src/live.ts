@@ -55,6 +55,8 @@ interface LivePick {
   cardName: string;
   turn: number;
   note: string | null;
+  /** When the pick was made (ms), from its note; null when the app didn't say. */
+  at: number | null;
 }
 
 // "ok": the app serves reasons (a null note means none was given).
@@ -95,6 +97,27 @@ function appBase(raw: string | null): string {
 
 const int = (v: unknown): number | null => (typeof v === "number" && Number.isInteger(v) ? v : null);
 
+/**
+ * Did `a` happen after `b`?
+ *
+ * Pick numbers count grid positions, not time, and the two part ways whenever a
+ * conspiracy picks out of turn: Quantity Over Quality puts a card in round 38
+ * during round 1, and by position that card stays "the latest pick" all draft.
+ * When the app sends each pick's time, that wins.
+ */
+function later(a: LivePick, b: LivePick): boolean {
+  if (a.at !== null && b.at !== null) return a.at > b.at;
+  if (a.at !== null || b.at !== null) return a.at !== null;
+  return a.pickNumber > b.pickNumber;
+}
+
+/** The cells of the most recent turn: by time when the app sends it, else by grid order. */
+function mostRecentTurn(order: LivePick[]): Set<string> {
+  const last = order.reduce<LivePick | null>((m, p) => (!m || later(p, m) ? p : m), null);
+  if (!last) return new Set();
+  return new Set(order.filter((p) => p.turn === last.turn && p.seat === last.seat).map((p) => key(p.seat, p.round)));
+}
+
 // The response is someone else's JSON: take what makes sense, drop the rest.
 function parseFeed(data: unknown): Feed {
   const d = (data ?? {}) as Record<string, unknown>;
@@ -112,7 +135,8 @@ function parseFeed(data: unknown): Feed {
     if (seat === null || round === null || seat < 0 || seat >= players.length || round < 1 || !cardName) continue;
     if ("note" in p) sawNotes = true;
     const note = typeof p.note === "string" && p.note.trim() ? p.note.trim() : null;
-    order.push({ pickNumber: int(p.pickNumber) ?? 0, round, seat, cardName, turn: int(p.turn) ?? -1, note });
+    const at = int(p.at);
+    order.push({ pickNumber: int(p.pickNumber) ?? 0, round, seat, cardName, turn: int(p.turn) ?? -1, note, at });
   }
   const up = (d.upNow ?? null) as Record<string, unknown> | null;
   const upSeat = up ? int(up.seat) : null;
@@ -185,6 +209,7 @@ function feedFromSheet(csv: string, doubleAfter: number | null | undefined): Fee
       cardName: p.cardName,
       turn: p.turn,
       note: null,
+      at: null,
     })),
     notes: "sheet",
   };
@@ -469,11 +494,10 @@ export function startLive(app: HTMLElement, opts: LiveOptions): LiveHandle {
     if (arrived.length) {
       latest = new Set(arrived);
     } else if (!shown || [...latest].some((k) => !cells.has(k))) {
-      const lastTurn = f.order.reduce((m, p) => Math.max(m, p.turn), -1);
-      latest = new Set(f.order.filter((p) => p.turn === lastTurn).map((p) => key(p.seat, p.round)));
+      latest = mostRecentTurn(f.order);
     }
     const newest = [...latest].map((k) => cells.get(k)!).filter(Boolean);
-    latestPick = newest.reduce<LivePick | null>((m, p) => (!m || p.pickNumber > m.pickNumber ? p : m), null);
+    latestPick = newest.reduce<LivePick | null>((m, p) => (!m || later(p, m) ? p : m), null);
     shown = now;
 
     const added: HTMLElement[] = [];
